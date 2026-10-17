@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Self-check for tour.py: python3 test_tour.py"""
+import hashlib, json, os, subprocess, sys, tempfile
+
+TOUR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tour.py")
+
+
+def sh(*cmd, cwd, check=True):
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=check)
+
+
+with tempfile.TemporaryDirectory() as d:
+    git = lambda *a: sh("git", "-c", "user.name=t", "-c", "user.email=t@t", *a, cwd=d).stdout.strip()
+    write = lambda p, s: open(os.path.join(d, p), "w").write(s)
+    git("init", "-q")
+    write("a.sql", "".join(f"line {i}\n" for i in range(1, 31)).replace("line 20\n", "-- comment\n"))
+    write("old name.txt", "same\ncontent\nhere\n")
+    write("gone.txt", "bye\n")
+    git("add", "-A"); git("commit", "-qm", "base")
+    base = git("rev-parse", "HEAD")
+    write("a.sql", open(os.path.join(d, "a.sql")).read().replace("line 2\n", "line two\n").replace("-- comment\n", ""))
+    git("mv", "old name.txt", "new name.txt")
+    git("rm", "-q", "gone.txt")
+    open(os.path.join(d, "img.bin"), "wb").write(bytes(range(256)))
+    git("add", "-A"); git("commit", "-qm", "head")
+    head = git("rev-parse", "HEAD")
+
+    tour = lambda *a: sh(sys.executable, TOUR, *a, cwd=d, check=False)
+    listing = tour("hunks", base, head).stdout
+    print(listing)
+    # the removed "-- comment" line must be read as a hunk line, not a "--- " file header
+    assert listing.splitlines() == [
+        "H1  a.sql  +2  line 1", "H2  a.sql  -20  line 19", "H3  gone.txt  -1",
+        "H4  img.bin  no line changes", "H5  new name.txt  no line changes"], listing
+
+    groups = os.path.join(d, "g.json")
+    json.dump({"groups": [
+        {"title": "Wording", "risk": "low", "hunks": ["H1"]},
+        {"title": "Cleanup", "risk": "medium", "why": "check nothing reads these", "hunks": ["H2", "gone.txt", "img.bin", "new name.txt"]},
+    ]}, open(groups, "w"))
+    threads = os.path.join(d, "t.json")
+    json.dump([
+        {"path": "a.sql", "line": 19, "side": "old", "author": "coderabbitai", "bot": True, "outdated": False,
+         "body": "<!-- x -->\n_⚠️ Potential issue_\n\ndetails", "url": "u1", "resolved": False},
+        {"path": "a.sql", "line": 3, "side": "new", "author": "jun", "bot": False, "outdated": False,
+         "body": "why?", "url": "u2", "resolved": False},
+        {"path": "a.sql", "line": 3, "side": "new", "author": "jun", "bot": False, "outdated": False,
+         "body": "done", "url": "u3", "resolved": True},
+        {"path": None, "line": None, "side": "new", "author": "amy", "bot": False, "outdated": False,
+         "body": "general", "url": "u4", "resolved": False},
+    ], open(threads, "w"))
+
+    r = tour("render", base, head, groups, "--threads", threads, "--url", "https://github.com/o/r/pull/7/")
+    print(r.stdout, r.stderr)
+    assert r.returncode == 0
+    assert r.stdout.startswith("5 hunks in 2 groups · 3 open threads (1 bot, 2 human) · 1 resolved")
+    sha = hashlib.sha256(b"a.sql").hexdigest()
+    assert f"[+2](https://github.com/o/r/pull/7/files#diff-{sha}R2-R2)" in r.stdout
+    assert f"[-20](https://github.com/o/r/pull/7/files#diff-{sha}L20-L20)" in r.stdout
+    wording, cleanup = r.stdout.split("## 2. Cleanup")
+    assert "jun at `a.sql:3`: why?" in wording and "u3" not in r.stdout
+    assert "coderabbitai (bot) at `a.sql:19`: ⚠️ Potential issue [thread](u1)" in cleanup
+    assert "## Open threads outside the diff\n- amy at `general`" in cleanup
+
+    gl = tour("render", base, head, groups, "--url", "https://gitlab.example.com/g/p/-/merge_requests/3")
+    assert f"/-/merge_requests/3/diffs#{hashlib.sha1(b'a.sql').hexdigest()})" in gl.stdout
+
+    json.dump({"groups": [{"title": "All", "risk": "low", "hunks": ["H1", "a.sql", "H9"]},
+                          {"title": "Dup", "risk": "nope", "hunks": ["H2"]}]}, open(groups, "w"))
+    r = tour("render", base, head, groups)
+    print(r.stderr)
+    assert r.returncode == 1
+    for msg in ["unknown hunk id or path 'H9'", "H2 is in groups 1 and 2", "group 2: needs a title and risk",
+                "ungrouped: H3  gone.txt  -1", "ungrouped: H5  new name.txt  no line changes"]:
+        assert msg in r.stderr, msg
+
+print("ok")
