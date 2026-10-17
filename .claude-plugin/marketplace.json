@@ -1,0 +1,15 @@
+{
+  "name": "gbchd",
+  "description": "gbchd's agent skills.",
+  "owner": {
+    "name": "gbchd",
+    "url": "https://github.com/gbchd"
+  },
+  "plugins": [
+    {
+      "name": "gbchd-skills",
+      "source": "./",
+      "description": "gbchd's agent skills."
+    }
+  ]
+}

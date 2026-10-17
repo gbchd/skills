@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: plugin.json version matches package.json
+        run: npm run check-plugin-version
+
+      - name: Validate plugin
+        run: npx -y @anthropic-ai/claude-code plugin validate . --strict
+
+      - name: Skill folder matches frontmatter name
+        run: |
+          status=0
+          for f in skills/*/SKILL.md; do
+            [ -e "$f" ] || continue
+            dir=$(basename "$(dirname "$f")")
+            name=$(sed -n 's/^name: *//p' "$f" | head -1)
+            if [ "$dir" != "$name" ]; then
+              echo "::error file=$f::folder '$dir' != name '$name'"
+              status=1
+            fi
+          done
+          exit $status

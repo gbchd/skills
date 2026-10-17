@@ -1,0 +1,12 @@
+{
+  "name": "gbchd-skills",
+  "version": "0.1.0",
+  "description": "gbchd's agent skills.",
+  "author": {
+    "name": "gbchd",
+    "url": "https://github.com/gbchd"
+  },
+  "repository": "https://github.com/gbchd/skills",
+  "license": "MIT",
+  "keywords": ["skills"]
+}
