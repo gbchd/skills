@@ -4,6 +4,7 @@
   tour.py hunks BASE HEAD                                  list every changed hunk with a stable id
   tour.py threads URL                                      review threads of a GitHub PR / GitLab MR, as JSON
   tour.py render BASE HEAD GROUPS [--threads F] [--url U]  check every hunk is grouped once, print the tour
+  tour.py post URL TOUR_FILE                               post the tour on the PR/MR, editing the earlier one
 """
 import argparse, hashlib, json, re, subprocess, sys
 from urllib.parse import quote, urlparse
@@ -79,14 +80,21 @@ GH_THREADS = """query($owner: String!, $repo: String!, $n: Int!) { repository(ow
     comments(first: 1) { nodes { author { login __typename } body url } } } } } } }"""
 
 
-def threads(url):
+def target(url):
+    """(platform, hostname, API path of the PR/MR) from its web URL."""
     u = urlparse(url.rstrip("/"))
-    out = []
     if "/-/merge_requests/" in u.path:
         project, n = u.path.strip("/").split("/-/merge_requests/")
-        raw = run("glab", "api", "--hostname", u.hostname, "--paginate",
-                  f"projects/{quote(project, safe='')}/merge_requests/{n.split('/')[0]}/discussions")
-        for d in json_values(raw):
+        return "gitlab", u.hostname, f"projects/{quote(project, safe='')}/merge_requests/{n.split('/')[0]}"
+    owner, repo, _, n = u.path.strip("/").split("/")[:4]
+    return "github", u.hostname, f"repos/{owner}/{repo}/issues/{n}"
+
+
+def threads(url):
+    platform, host, api = target(url)
+    out = []
+    if platform == "gitlab":
+        for d in json_values(run("glab", "api", "--hostname", host, "--paginate", f"{api}/discussions")):
             first = d["notes"][0]
             if first.get("system") or not first.get("resolvable"):
                 continue
@@ -104,8 +112,8 @@ def threads(url):
                 "outdated": False,
             })
         return out
-    owner, repo, _, n = u.path.strip("/").split("/")[:4]
-    data = json.loads(run("gh", "api", "graphql", "--hostname", u.hostname, "-f", f"owner={owner}",
+    _, owner, repo, _, n = api.split("/")
+    data = json.loads(run("gh", "api", "graphql", "--hostname", host, "-f", f"owner={owner}",
                           "-f", f"repo={repo}", "-F", f"n={n}", "-f", f"query={GH_THREADS}"))
     rt = data["data"]["repository"]["pullRequest"]["reviewThreads"]
     if rt["pageInfo"]["hasNextPage"]:
@@ -120,6 +128,28 @@ def threads(url):
             "body": c["body"], "url": c["url"], "resolved": t["isResolved"], "outdated": t["isOutdated"],
         })
     return out
+
+
+MARKER = "<!-- pr-tour -->"
+
+
+def post(url, tour_file):
+    """Edit the earlier tour comment (found by MARKER) or create one; print the comment URL."""
+    platform, host, api = target(url)
+    with open(tour_file) as f:
+        body = f"{f.read().rstrip()}\n\n{MARKER}"
+    cli = "glab" if platform == "gitlab" else "gh"
+    path = f"{api}/notes" if platform == "gitlab" else f"{api}/comments"
+    old = next((c for c in json_values(run(cli, "api", "--hostname", host, "--paginate", path))
+                if MARKER in (c.get("body") or "")), None)
+    if old is None:
+        c = json.loads(run(cli, "api", "--hostname", host, "-X", "POST", path, "-f", f"body={body}"))
+    elif platform == "gitlab":
+        c = json.loads(run(cli, "api", "--hostname", host, "-X", "PUT", f"{path}/{old['id']}", "-f", f"body={body}"))
+    else:  # GitHub edits issue comments by id, outside the PR's path
+        c = json.loads(run(cli, "api", "--hostname", host, "-X", "PATCH",
+                           f"{api.rsplit('/', 1)[0]}/comments/{old['id']}", "-f", f"body={body}"))
+    print(c.get("html_url") or f"{url.rstrip('/')}#note_{c['id']}")
 
 
 def excerpt(body):
@@ -218,6 +248,9 @@ def main():
     sub.choices["render"].add_argument("--threads")
     sub.choices["render"].add_argument("--url")
     sub.add_parser("threads").add_argument("url")
+    s = sub.add_parser("post")
+    s.add_argument("url")
+    s.add_argument("tour_file")
     a = p.parse_args()
     if a.cmd == "hunks":
         for h in changes(a.base, a.head):
@@ -225,6 +258,8 @@ def main():
             print(f"{h['id']}  {h['path']}  {span(h['hunk'])}  {ctx}".rstrip())
     elif a.cmd == "threads":
         print(json.dumps(threads(a.url), indent=1))
+    elif a.cmd == "post":
+        post(a.url, a.tour_file)
     else:
         render(a.base, a.head, a.groups, a.threads, a.url and a.url.rstrip("/"))
 
