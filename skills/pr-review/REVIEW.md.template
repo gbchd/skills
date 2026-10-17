@@ -1,0 +1,21 @@
+# REVIEW.md
+
+Read by /pr-review for changes in this directory and below. Code owners write it; nearest file wins.
+
+## What failure looks like here
+<!-- One line. docs: "it lies". config: "it misroutes". billing: "someone is charged wrong". -->
+
+## Always flag
+<!-- Rules specific to this code the reviewer must check. -->
+-
+
+## Skip
+<!-- Paths or globs the reviewer ignores. -->
+-
+
+## Nit cap
+3
+
+## Depth
+<!-- Root REVIEW.md only: quick | standard | deep. Use deep where one missed bug costs more than review time. -->
+standard
