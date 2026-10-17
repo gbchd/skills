@@ -1,6 +1,6 @@
 ---
 name: pr-review
-description: Review a GitHub PR or GitLab MR with parallel bug finders, majority-vote verification, severity-tagged inline comments, and round limits that make review converge. Use when the user asks to review or re-review a PR/MR, passes a PR/MR number or URL, or runs /pr-review. Args: <n|url|base..head> [quick|standard|deep] [--local] [--json].
+description: "Review a GitHub PR or GitLab MR with parallel bug finders, majority-vote verification, severity-tagged inline comments, and round limits that make review converge. Use when the user asks to review or re-review a PR/MR, passes a PR/MR number or URL, or runs /pr-review. Args: <n|url|base..head> [quick|standard|deep] [--local] [--json]."
 ---
 
 Priority, in order: catch real bugs, then cut review rounds. Every posted comment costs a round, because an agent author fixes whatever it is told. Post only findings a skeptical reader would confirm from the code alone.

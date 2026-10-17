@@ -1,6 +1,6 @@
 ---
 name: pr-tour
-description: Guided tour of a GitHub PR or GitLab MR for a human reviewer, cutting the diff into changestacks (one concern each) in reading order, each with risk, a diagram or pseudocode, links into the diff, and its open review threads. Use when the user wants to review a PR/MR themselves, asks to walk through, tour, or group a PR's changes, or runs /pr-tour. Args: <n|url|base..head> [--post] [--serve].
+description: "Guided tour of a GitHub PR or GitLab MR for a human reviewer, cutting the diff into changestacks (one concern each) in reading order, each with risk, a diagram or pseudocode, links into the diff, and its open review threads. Use when the user wants to review a PR/MR themselves, asks to walk through, tour, or group a PR's changes, or runs /pr-tour. Args: <n|url|base..head> [--post] [--serve]."
 ---
 
 The reader is a human about to review. Give them a **tour**: the diff cut into **changestacks**, one concern each, in the order a reviewer should read them, each shown as a picture of what it does with the open review threads sitting next to the code they are about. They comment in GitHub/GitLab through the links; the tour only decides what to look at, in what order, and what it means.
