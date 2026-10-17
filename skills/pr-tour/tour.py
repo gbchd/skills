@@ -3,7 +3,7 @@
 
   tour.py hunks BASE HEAD                                  list every changed hunk with a stable id
   tour.py threads URL                                      review threads of a GitHub PR / GitLab MR, as JSON
-  tour.py render BASE HEAD GROUPS [--threads F] [--url U]  check every hunk is grouped once, print the tour
+  tour.py render BASE HEAD STACKS [--threads F] [--url U]  check every hunk is in one changestack, print the tour
   tour.py post URL TOUR_FILE                               post the tour on the PR/MR, editing the earlier one
 """
 import argparse, hashlib, json, re, subprocess, sys
@@ -23,7 +23,7 @@ def git(*args):
 
 def changes(base, head):
     """Hunks in diff order as {id, path, hunk}; hunk is (old_start, old_len, new_start, new_len, context),
-    or None for a file with no line changes (binary, mode, pure rename) so it still has to be grouped."""
+    or None for a file with no line changes (binary, mode, pure rename) so it still has to land in a changestack."""
     by_path, old, path, header = {}, None, None, False
     for line in git("diff", "-U0", "--no-color", "--no-ext-diff", "-M", base, head).splitlines():
         if line.startswith("diff --git "):
@@ -161,38 +161,42 @@ def excerpt(body):
 
 
 def place(t, hunks):
-    """Group index of the hunk nearest the thread's line in the same file, or None."""
+    """Changestack index of the hunk nearest the thread's line in the same file, or None."""
     best = None
-    for gi, h in hunks.get(t["path"], []):
+    for si, h in hunks.get(t["path"], []):
         d = 0
         if h is not None and t["line"]:
             s, l = (h[2], h[3]) if t["side"] == "new" else (h[0], h[1])
             d = max(s - t["line"], 0, t["line"] - (s + max(l, 1) - 1))
         if best is None or d < best[0]:
-            best = (d, gi)
+            best = (d, si)
     return best and best[1]
 
 
-def render(base, head, groups_file, threads_file=None, url=None):
+def render(base, head, stacks_file, threads_file=None, url=None):
     hs = changes(base, head)
     by_id, by_path = {h["id"]: h for h in hs}, {}
     for h in hs:
         by_path.setdefault(h["path"], []).append(h["id"])
-    with open(groups_file) as f:
-        groups = json.load(f)["groups"]
+    with open(stacks_file) as f:
+        stacks = json.load(f)["changestacks"]
     owner, errors = {}, []
-    for gi, g in enumerate(groups):
-        if not g.get("title") or g.get("risk") not in RISKS:
-            errors.append(f"group {gi + 1}: needs a title and risk in {RISKS}")
-        for ref in g.get("hunks", []):
+    for si, st in enumerate(stacks):
+        if not st.get("title") or st.get("risk") not in RISKS:
+            errors.append(f"changestack {si + 1}: needs a title and risk in {RISKS}")
+        visual = st.get("visual") or ""
+        st["visual"] = visual = "\n".join(visual) if isinstance(visual, list) else visual
+        if sum(line.lstrip().startswith("```") for line in visual.splitlines()) % 2:
+            errors.append(f"changestack {si + 1}: visual has an unclosed ``` fence")
+        for ref in st.get("hunks", []):
             ids = [ref] if ref in by_id else by_path.get(ref, [])
             if not ids:
-                errors.append(f"group {gi + 1}: unknown hunk id or path {ref!r}")
+                errors.append(f"changestack {si + 1}: unknown hunk id or path {ref!r}")
             for i in ids:
-                if owner.get(i, gi) != gi:
-                    errors.append(f"{i} is in groups {owner[i] + 1} and {gi + 1}")
-                owner[i] = gi
-    errors += [f"ungrouped: {h['id']}  {h['path']}  {span(h['hunk'])}" for h in hs if h["id"] not in owner]
+                if owner.get(i, si) != si:
+                    errors.append(f"{i} is in changestacks {owner[i] + 1} and {si + 1}")
+                owner[i] = si
+    errors += [f"unstacked: {h['id']}  {h['path']}  {span(h['hunk'])}" for h in hs if h["id"] not in owner]
     if errors:
         sys.exit("\n".join(errors))
 
@@ -204,13 +208,13 @@ def render(base, head, groups_file, threads_file=None, url=None):
     placed = {}
     for h in hs:
         placed.setdefault(h["path"], []).append((owner[h["id"]], h["hunk"]))
-    per_group, elsewhere = {}, []
+    per_stack, elsewhere = {}, []
     for t in open_:
-        gi = place(t, placed)
-        (elsewhere if gi is None else per_group.setdefault(gi, [])).append(t)
+        si = place(t, placed)
+        (elsewhere if si is None else per_stack.setdefault(si, [])).append(t)
 
     bots = sum(t["bot"] for t in open_)
-    print(f"{len(hs)} hunks in {len(groups)} groups · {len(open_)} open threads "
+    print(f"{len(hs)} hunks in {len(stacks)} changestacks · {len(open_)} open threads "
           f"({bots} bot, {len(open_) - bots} human) · {len(ts) - len(open_)} resolved")
 
     def thread_line(t):
@@ -218,20 +222,22 @@ def render(base, head, groups_file, threads_file=None, url=None):
         tags = " (bot)" * t["bot"] + " (outdated)" * t["outdated"]
         return f"- {t['author']}{tags} at `{where}`: {excerpt(t['body'])} [thread]({t['url']})"
 
-    for gi, g in enumerate(groups):
-        print(f"\n## {gi + 1}. {g['title']} · {g['risk']} risk")
-        if g.get("why"):
-            print(g["why"])
+    for si, st in enumerate(stacks):
+        print(f"\n## {si + 1}. {st['title']} · {st['risk']} risk")
+        if st.get("why"):
+            print(st["why"])
+        if st["visual"]:
+            print(f"\n{st['visual'].strip()}\n")
         files = {}
         for h in hs:
-            if owner[h["id"]] == gi:
+            if owner[h["id"]] == si:
                 files.setdefault(h["path"], []).append(h["hunk"])
         for path, hunks in files.items():
             spans = [f"[{span(h)}]({link(url, path, h)})" if url else span(h) for h in hunks]
             print(f"- `{path}` {', '.join(spans)}")
-        if gi in per_group:
+        if si in per_stack:
             print("\nOpen threads:")
-            print("\n".join(thread_line(t) for t in per_group[gi]))
+            print("\n".join(thread_line(t) for t in per_stack[si]))
     if elsewhere:
         print("\n## Open threads outside the diff")
         print("\n".join(thread_line(t) for t in elsewhere))
@@ -244,7 +250,7 @@ def main():
         s = sub.add_parser(name)
         s.add_argument("base")
         s.add_argument("head")
-    sub.choices["render"].add_argument("groups")
+    sub.choices["render"].add_argument("changestacks")
     sub.choices["render"].add_argument("--threads")
     sub.choices["render"].add_argument("--url")
     sub.add_parser("threads").add_argument("url")
@@ -261,7 +267,7 @@ def main():
     elif a.cmd == "post":
         post(a.url, a.tour_file)
     else:
-        render(a.base, a.head, a.groups, a.threads, a.url and a.url.rstrip("/"))
+        render(a.base, a.head, a.changestacks, a.threads, a.url and a.url.rstrip("/"))
 
 
 if __name__ == "__main__":
