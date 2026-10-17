@@ -1,6 +1,6 @@
 ---
 name: pr-tour
-description: "Guided tour of a GitHub PR or GitLab MR for a human reviewer, grouping the diff by concern in reading order with risk, links into the diff, and open review threads attached to each group. Use when the user wants to review a PR/MR themselves, asks to walk through, tour, or group a PR's changes, or runs /pr-tour. Args: <n|url|base..head>."
+description: "Guided tour of a GitHub PR or GitLab MR for a human reviewer, grouping the diff by concern in reading order with risk, links into the diff, and open review threads attached to each group. Use when the user wants to review a PR/MR themselves, asks to walk through, tour, or group a PR's changes, or runs /pr-tour. Args: <n|url|base..head> [--post]."
 ---
 
 The reader is a human about to review. Give them a **tour**: the diff cut into **groups**, one concern each, in the order a reviewer should read them, with the open review threads sitting next to the code they are about. They comment in GitHub/GitLab through the links; the tour only decides what to look at and in what order.
@@ -62,3 +62,5 @@ Done when it exits 0.
 ## 6. Present
 
 Print a title line (`# Tour of <title>`), then the render output verbatim. Close with one line naming where to start: the first `high` group, or the group with the most open human threads if that differs.
+
+With `--post`, write that same tour to `$T/tour.md` and run `tour.py post <url> $T/tour.md`. It edits the tour comment from an earlier run, so the PR/MR carries one current tour, and prints the comment's URL. Range mode has nowhere to post: say so and print only.

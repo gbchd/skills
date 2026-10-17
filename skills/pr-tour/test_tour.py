@@ -74,4 +74,22 @@ with tempfile.TemporaryDirectory() as d:
                 "ungrouped: H3  gone.txt  -1", "ungrouped: H5  new name.txt  no line changes"]:
         assert msg in r.stderr, msg
 
+    # post: a fake gh lists $COMMENTS, logs every other call's args, answers with a comment
+    bin_dir, log = os.path.join(d, "bin"), os.path.join(d, "gh.log")
+    os.mkdir(bin_dir)
+    fake = os.path.join(bin_dir, "gh")
+    open(fake, "w").write(f'#!/bin/sh\ncase "$*" in *--paginate*) printf "%s\\n" "$COMMENTS";; '
+                          f'*) printf "%s\\n" "$@" > {log}; echo \'{{"id": 9, "html_url": "h"}}\';; esac\n')
+    os.chmod(fake, 0o755)
+    write("tour.md", "# Tour\n")
+    for comments, expect in [('[{"id": 1, "body": "hi"}][{"id": 5, "body": "old\\n<!-- pr-tour -->"}]',
+                              ["PATCH", "repos/o/r/issues/comments/5"]),
+                             ('[{"id": 1, "body": null}]', ["POST", "repos/o/r/issues/7/comments"])]:
+        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "COMMENTS": comments}
+        r = subprocess.run([sys.executable, TOUR, "post", "https://github.com/o/r/pull/7", "tour.md"],
+                           cwd=d, capture_output=True, text=True, env=env)
+        assert r.returncode == 0 and r.stdout == "h\n", r.stderr
+        args = open(log).read()
+        assert all(e in args for e in expect) and "body=# Tour\n\n<!-- pr-tour -->" in args, args
+
 print("ok")
