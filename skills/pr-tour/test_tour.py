@@ -33,11 +33,11 @@ with tempfile.TemporaryDirectory() as d:
         "H1  a.sql  +2  line 1", "H2  a.sql  -20  line 19", "H3  gone.txt  -1",
         "H4  img.bin  no line changes", "H5  new name.txt  no line changes"], listing
 
-    groups = os.path.join(d, "g.json")
-    json.dump({"groups": [
-        {"title": "Wording", "risk": "low", "hunks": ["H1"]},
+    stacks = os.path.join(d, "s.json")
+    json.dump({"changestacks": [
+        {"title": "Wording", "risk": "low", "hunks": ["H1"], "visual": ["```diff", "-line 2", "+line two", "```"]},
         {"title": "Cleanup", "risk": "medium", "why": "check nothing reads these", "hunks": ["H2", "gone.txt", "img.bin", "new name.txt"]},
-    ]}, open(groups, "w"))
+    ]}, open(stacks, "w"))
     threads = os.path.join(d, "t.json")
     json.dump([
         {"path": "a.sql", "line": 19, "side": "old", "author": "coderabbitai", "bot": True, "outdated": False,
@@ -50,10 +50,12 @@ with tempfile.TemporaryDirectory() as d:
          "body": "general", "url": "u4", "resolved": False},
     ], open(threads, "w"))
 
-    r = tour("render", base, head, groups, "--threads", threads, "--url", "https://github.com/o/r/pull/7/")
+    r = tour("render", base, head, stacks, "--threads", threads, "--url", "https://github.com/o/r/pull/7/")
     print(r.stdout, r.stderr)
     assert r.returncode == 0
-    assert r.stdout.startswith("5 hunks in 2 groups · 3 open threads (1 bot, 2 human) · 1 resolved")
+    assert r.stdout.startswith("5 hunks in 2 changestacks · 3 open threads (1 bot, 2 human) · 1 resolved")
+    # the visual sits between the title and the file list, fences intact
+    assert "## 1. Wording · low risk\n\n```diff\n-line 2\n+line two\n```\n\n- `a.sql`" in r.stdout
     sha = hashlib.sha256(b"a.sql").hexdigest()
     assert f"[+2](https://github.com/o/r/pull/7/files#diff-{sha}R2-R2)" in r.stdout
     assert f"[-20](https://github.com/o/r/pull/7/files#diff-{sha}L20-L20)" in r.stdout
@@ -62,16 +64,18 @@ with tempfile.TemporaryDirectory() as d:
     assert "coderabbitai (bot) at `a.sql:19`: ⚠️ Potential issue [thread](u1)" in cleanup
     assert "## Open threads outside the diff\n- amy at `general`" in cleanup
 
-    gl = tour("render", base, head, groups, "--url", "https://gitlab.example.com/g/p/-/merge_requests/3")
+    gl = tour("render", base, head, stacks, "--url", "https://gitlab.example.com/g/p/-/merge_requests/3")
     assert f"/-/merge_requests/3/diffs#{hashlib.sha1(b'a.sql').hexdigest()})" in gl.stdout
 
-    json.dump({"groups": [{"title": "All", "risk": "low", "hunks": ["H1", "a.sql", "H9"]},
-                          {"title": "Dup", "risk": "nope", "hunks": ["H2"]}]}, open(groups, "w"))
-    r = tour("render", base, head, groups)
+    json.dump({"changestacks": [
+        {"title": "All", "risk": "low", "hunks": ["H1", "a.sql", "H9"], "visual": "```text\nunclosed"},
+        {"title": "Dup", "risk": "nope", "hunks": ["H2"]}]}, open(stacks, "w"))
+    r = tour("render", base, head, stacks)
     print(r.stderr)
     assert r.returncode == 1
-    for msg in ["unknown hunk id or path 'H9'", "H2 is in groups 1 and 2", "group 2: needs a title and risk",
-                "ungrouped: H3  gone.txt  -1", "ungrouped: H5  new name.txt  no line changes"]:
+    for msg in ["unknown hunk id or path 'H9'", "H2 is in changestacks 1 and 2", "changestack 2: needs a title and risk",
+                "changestack 1: visual has an unclosed ``` fence",
+                "unstacked: H3  gone.txt  -1", "unstacked: H5  new name.txt  no line changes"]:
         assert msg in r.stderr, msg
 
     # post: a fake gh lists $COMMENTS, logs every other call's args, answers with a comment
