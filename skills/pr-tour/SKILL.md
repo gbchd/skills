@@ -1,6 +1,6 @@
 ---
 name: pr-tour
-description: Guided tour of a GitHub PR or GitLab MR for a human reviewer, cutting the diff into changestacks (one concern each) in reading order, each with risk, a diagram or pseudocode, links into the diff, and its open review threads. Use when the user wants to review a PR/MR themselves, asks to walk through, tour, or group a PR's changes, or runs /pr-tour. Args: <n|url|base..head> [--post].
+description: Guided tour of a GitHub PR or GitLab MR for a human reviewer, cutting the diff into changestacks (one concern each) in reading order, each with risk, a diagram or pseudocode, links into the diff, and its open review threads. Use when the user wants to review a PR/MR themselves, asks to walk through, tour, or group a PR's changes, or runs /pr-tour. Args: <n|url|base..head> [--post] [--serve].
 ---
 
 The reader is a human about to review. Give them a **tour**: the diff cut into **changestacks**, one concern each, in the order a reviewer should read them, each shown as a picture of what it does with the open review threads sitting next to the code they are about. They comment in GitHub/GitLab through the links; the tour only decides what to look at, in what order, and what it means.
@@ -79,3 +79,11 @@ Done when it exits 0.
 Print a title line (`# Tour of <title>`), then the render output verbatim. Close with one line naming where to start: the first `high` changestack, or the one with the most open human threads if that differs.
 
 With `--post`, write that same tour to `$T/tour.md` and run `tour.py post <url> $T/tour.md`. It edits the tour comment from an earlier run, so the PR/MR carries one current tour, and prints the comment's URL. Range mode has nowhere to post: say so and print only.
+
+With `--serve`, start the web view in the background instead of printing the tour:
+
+```bash
+tour.py serve $BASE $HEAD_SHA $T/changestacks.json --threads $T/threads.json --url <url> --title "<title>"
+```
+
+It opens the browser and prints its `http://127.0.0.1:<port>/` address; give the user that address. The reviewer walks the changestacks one per screen, comments on lines, replies to and resolves threads, and picks Comment / Approve / Request changes on submit; the page sends it all through `gh`/`glab`. Their pending work survives a reload. It runs until stopped. Range mode serves the same page with submitting turned off.

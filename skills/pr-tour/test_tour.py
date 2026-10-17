@@ -41,7 +41,7 @@ with tempfile.TemporaryDirectory() as d:
     threads = os.path.join(d, "t.json")
     json.dump([
         {"path": "a.sql", "line": 19, "side": "old", "author": "coderabbitai", "bot": True, "outdated": False,
-         "body": "<!-- x -->\n_⚠️ Potential issue_\n\ndetails", "url": "u1", "resolved": False},
+         "body": "<!-- x -->\n_⚠️ Potential issue_\n\ndetails /*TOKEN*/ /*DATA*/", "url": "u1", "resolved": False},
         {"path": "a.sql", "line": 3, "side": "new", "author": "jun", "bot": False, "outdated": False,
          "body": "why?", "url": "u2", "resolved": False},
         {"path": "a.sql", "line": 3, "side": "new", "author": "jun", "bot": False, "outdated": False,
@@ -95,5 +95,109 @@ with tempfile.TemporaryDirectory() as d:
         assert r.returncode == 0 and r.stdout == "h\n", r.stderr
         args = open(log).read()
         assert all(e in args for e in expect) and "body=# Tour\n\n<!-- pr-tour -->" in args, args
+
+    # submit: fake gh/glab log each call (argv + stdin) as a JSON line; FAIL=<text> fails calls containing it
+    calls, sub_bin = os.path.join(d, "calls.log"), os.path.join(d, "bin2")
+    os.mkdir(sub_bin)
+    for cli in ("gh", "glab"):
+        open(os.path.join(sub_bin, cli), "w").write(f"""#!{sys.executable}
+import json, os, sys
+args = sys.argv[1:]
+stdin = sys.stdin.read() if "-" in args else ""
+open({calls!r}, "a").write(json.dumps({{"args": args, "stdin": stdin}}) + "\\n")
+if os.environ.get("FAIL") and os.environ["FAIL"] in " ".join(args): sys.exit("boom")
+mr = {{"diff_refs": {{"base_sha": "b", "start_sha": "s", "head_sha": "h"}}}}
+print(json.dumps(mr if args[-1].endswith("merge_requests/3") else {{"html_url": "h"}}))
+""")
+        os.chmod(os.path.join(sub_bin, cli), 0o755)
+    os.environ["PATH"] = f"{sub_bin}:{os.environ['PATH']}"
+    sys.path.insert(0, os.path.dirname(TOUR))
+    import tour
+
+    def take_calls():
+        lines = open(calls).read().splitlines() if os.path.exists(calls) else []
+        open(calls, "w").close()
+        return [json.loads(l) for l in lines]
+
+    review = {"event": "REQUEST_CHANGES", "body": "see inline",
+              "comments": [{"id": 1, "path": "a.sql", "old_path": "a.sql", "line": 2, "old_line": None, "body": "new side"},
+                           {"id": 2, "path": "a.sql", "old_path": "a.sql", "line": None, "old_line": 20, "body": "old side"}],
+              "replies": [{"id": 3, "thread": "T1", "reply_to": 55, "body": "ok"}], "resolve": ["T1"]}
+    take_calls()
+    res = tour.submit("https://github.com/o/r/pull/7", head, review)
+    assert res == {"sent": [1, 2, 3, "T1"], "links": ["h", "h"]}, res
+    c = take_calls()
+    assert "repos/o/r/pulls/7/reviews" in c[0]["args"] and json.loads(c[0]["stdin"]) == {
+        "commit_id": head, "event": "REQUEST_CHANGES", "body": "see inline",
+        "comments": [{"path": "a.sql", "body": "new side", "line": 2, "side": "RIGHT"},
+                     {"path": "a.sql", "body": "old side", "line": 20, "side": "LEFT"}]}, c[0]
+    assert "repos/o/r/pulls/7/comments/55/replies" in c[1]["args"] and "body=ok" in c[1]["args"]
+    assert "graphql" in c[2]["args"] and "id=T1" in c[2]["args"]
+
+    # a failure midway reports what already went out and stops there
+    os.environ["FAIL"] = "/replies"
+    res = tour.submit("https://github.com/o/r/pull/7", head, review)
+    del os.environ["FAIL"]
+    assert res["sent"] == [1, 2] and "boom" in res["error"], res
+    assert not any("graphql" in x["args"] for x in take_calls())
+
+    api = "projects/g%2Fp/merge_requests/3"
+    res = tour.submit("https://gitlab.example.com/g/p/-/merge_requests/3", head, {**review, "event": "APPROVE"})
+    assert res["sent"] == [1, 2, 3, "T1"] and "error" not in res, res
+    c = [x["args"] for x in take_calls()]
+    assert [next(a for a in x if a.startswith(api)) for x in c] == [
+        api, f"{api}/draft_notes", f"{api}/draft_notes", f"{api}/draft_notes/bulk_publish", f"{api}/notes",
+        f"{api}/discussions/55/notes", f"{api}/discussions/T1", f"{api}/approve"], c
+    assert {"position[new_line]=2", "position[head_sha]=h", "position[old_path]=a.sql"} <= set(c[1])
+    assert not any("old_line" in a for a in c[1])
+    assert "position[old_line]=20" in c[2] and not any("new_line" in a for a in c[2])
+
+    # serve: the page carries the stacks with context lines; only the page itself may submit
+    import re, urllib.error, urllib.request
+    good = os.path.join(d, "good.json")
+    json.dump({"changestacks": [
+        {"title": "Wording", "risk": "low", "hunks": ["H1"]},
+        {"title": "Cleanup", "risk": "medium", "hunks": ["H2", "gone.txt", "img.bin", "new name.txt"]}]}, open(good, "w"))
+    srv = subprocess.Popen([sys.executable, TOUR, "serve", base, head, good, "--threads", threads,
+                            "--url", "https://github.com/o/r/pull/7", "--title", "T", "--no-open"],
+                           cwd=d, stdout=subprocess.PIPE, text=True)
+    try:
+        addr = srv.stdout.readline().strip()
+        port = addr.rstrip("/").rsplit(":", 1)[1]
+
+        def http(method, path, host=f"127.0.0.1:{port}", body=None, token=None):
+            req = urllib.request.Request(addr.rstrip("/") + path, data=body, method=method, headers={
+                "Host": host, "Content-Type": "application/json", **({"X-Tour-Token": token} if token else {})})
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, r.read().decode()
+            except urllib.error.HTTPError as e:
+                return e.code, e.read().decode()
+
+        status, page = http("GET", "/")
+        assert status == 200
+        token = re.search(r'const TOKEN = "([^"]+)";', page)[1]
+        raw = re.search(r"const D = (.*?);\nconst TOKEN", page, re.S)[1]
+        # a raw "<!--" or "<script" in the diff would make the parser swallow the page's own </script>
+        assert "<" not in raw and "<!-- x -->" in json.dumps(json.loads(raw))
+        assert "details /*TOKEN*/ /*DATA*/" in json.loads(raw)["threads"][0]["body"]
+        data = json.loads(raw)
+        wording, cleanup = data["stacks"]
+        assert ["+", None, 2, "line two"] in wording["files"][0]["hunks"][0] and ["-", 2, None, "line 2"] in wording["files"][0]["hunks"][0]
+        assert ["-", 20, None, "-- comment"] in cleanup["files"][0]["hunks"][0]
+        assert [f["path"] for f in cleanup["files"]] == ["a.sql", "gone.txt", "img.bin", "new name.txt"]
+        assert {t["author"]: t["stack"] for t in data["threads"]} == {"coderabbitai": 1, "jun": 0, "amy": None}
+
+        assert http("GET", "/", host="evil.example")[0] == 404
+        assert http("POST", "/submit", body=b"{}")[0] == 403
+        assert http("POST", "/submit", body=b"{}", token="wrong")[0] == 403
+        assert http("POST", "/submit", host=f"evil.example:{port}", body=b"{}", token=token)[0] == 403
+        take_calls()
+        status, out = http("POST", "/submit", token=token, body=json.dumps({"comments": review["comments"][:1]}).encode())
+        assert status == 200 and json.loads(out)["sent"] == [1], out
+        assert len(take_calls()) == 1
+    finally:
+        srv.terminate()
+        srv.wait()
 
 print("ok")

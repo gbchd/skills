@@ -29,7 +29,7 @@ npx skills@latest add gbchd/skills
 | --- | --- |
 | [explain](./skills/explain/SKILL.md) | Explain one slice of the codebase before you change it, grounded in the code as it is today. |
 | [pr-review](./skills/pr-review/SKILL.md) | Review a GitHub PR or GitLab MR with parallel bug finders, majority-vote verification, and round limits that make review converge. |
-| [pr-tour](./skills/pr-tour/SKILL.md) | Tour a GitHub PR or GitLab MR for a human reviewer: the diff cut into changestacks in reading order, each with risk, a diagram or pseudocode, diff links, and its open threads. |
+| [pr-tour](./skills/pr-tour/SKILL.md) | Tour a GitHub PR or GitLab MR for a human reviewer: the diff cut into changestacks in reading order, each with risk, a diagram or pseudocode, diff links, and its open threads; optionally reviewed and submitted from a local web view. |
 
 ## Local development
 
